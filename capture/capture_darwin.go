@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"net"
 	"syscall"
 	"unsafe"
 
@@ -95,6 +97,13 @@ func BPF_WORDALIGN(x int) int {
 	return (x + (unix.BPF_ALIGNMENT - 1)) & ^(unix.BPF_ALIGNMENT - 1) //https://stackoverflow.com/questions/34459450/what-is-the-operator-in-golang
 }
 
-func ParseFrame(frame []byte) {
+func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-networks/ethernet-frame-format/
 	fmt.Println("This is a single frame: ", frame)
+	macDst := net.HardwareAddr(frame[0:6])
+	macSrc := net.HardwareAddr(frame[6:12])
+	fmt.Println("Dst mac addr: ", macDst)
+	fmt.Println("Src mac addr: ", macSrc)
+	etherType := binary.BigEndian.Uint16(frame[12:14])
+	fmt.Printf("   EtherType: 0x%04X\n", etherType)
+
 }
