@@ -123,10 +123,10 @@ func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-network
 	}
 }
 
-func parseIPv4(data []byte) {
-	fmt.Println("Parsing this ipv4 data: ", data)
+func parseIPv4(packets []byte) {
+	fmt.Println("Parsing this ipv4 data: ", packets)
 }
 
-func parseIpv6(data []byte) {
-	fmt.Println("Parsing this ipv6 data: ", data)
+func parseIpv6(packets []byte) {
+	fmt.Println("Parsing this ipv6 data: ", packets)
 }
