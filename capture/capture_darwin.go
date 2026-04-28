@@ -15,6 +15,13 @@ type ifreq struct {
 	_    [16]byte
 }
 
+const (
+	EtherTypeIPv4 = 0x0800
+	EtherTypeARP  = 0x0806
+	EtherTypeIPv6 = 0x86DD
+	EtherTypeVLAN = 0x8100
+)
+
 // macOS (BSD) does not expose link-layer packet capture via AF_PACKET sockets like Linux.
 // Instead, it uses BPF (Berkeley Packet Filter), exposed as character devices (/dev/bpf*).
 // We iterate over these devices and open the first available one to capture raw packets.
@@ -103,7 +110,23 @@ func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-network
 	macSrc := net.HardwareAddr(frame[6:12])
 	fmt.Println("Dst mac addr: ", macDst)
 	fmt.Println("Src mac addr: ", macSrc)
-	etherType := binary.BigEndian.Uint16(frame[12:14])
-	fmt.Printf("   EtherType: 0x%04X\n", etherType)
+	etherType := binary.BigEndian.Uint16(frame[12:14]) //The network byte order is defined to always be big-endian (https://www.ibm.com/docs/ja/zvm/7.2.0?topic=domains-network-byte-order-host-byte-order)
+	switch etherType {
+	case EtherTypeIPv6:
+		fmt.Println("Ipv6")
+		parseIpv6(frame[14:])
+	case EtherTypeIPv4:
+		fmt.Println("Ipv4")
+		parseIPv4(frame[14:])
+	default:
+		fmt.Println("Some thing unknown: ", etherType)
+	}
+}
 
+func parseIPv4(data []byte) {
+	fmt.Println("Parsing this ipv4 data: ", data)
+}
+
+func parseIpv6(data []byte) {
+	fmt.Println("Parsing this ipv6 data: ", data)
 }
