@@ -124,7 +124,21 @@ func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-network
 }
 
 func parseIPv4(packets []byte) {
-	fmt.Println("Parsing this ipv4 data: ", packets)
+	//parsing: https://www.tutorialspoint.com/ipv4/ipv4_packet_structure.htm
+
+	firstByte := packets[0]
+	version := firstByte >> 4 //Extract first 4 bits
+	ihl := firstByte & 0x0F   //why 15 because its binayr is 1111 and we will only be needing last 4 bits
+	fmt.Println("Version:", version)
+	fmt.Println("IHL:", ihl)
+	secondByte := packets[1]
+	dscp := secondByte >> 2
+	ecn := secondByte & 0x03
+	fmt.Println("DSCP: ", dscp)
+	fmt.Println("ECN: ", ecn)
+	bytes2ndAnd3rd := packets[2:4]
+	totalLen := binary.BigEndian.Uint16(bytes2ndAnd3rd)
+	fmt.Println("Entire ip packet size: ", totalLen, "Bytes")
 }
 
 func parseIpv6(packets []byte) {
