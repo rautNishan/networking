@@ -10,6 +10,67 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var protocols = map[uint8]string{
+	1:   "ICMP",
+	2:   "IGMP",
+	6:   "TCP",
+	17:  "UDP",
+	41:  "ENCAP",
+	89:  "OSPF",
+	132: "SCTP",
+}
+
+const (
+	ICMP  = 1
+	IGMP  = 2
+	TCP   = 6
+	UDP   = 17
+	ENCAP = 41
+	OSPF  = 89
+	SCTP  = 132
+)
+
+type IPv4Packet struct {
+	ip             string
+	Version        uint8
+	IHL            uint8
+	DSCP           uint8
+	ECN            uint8
+	TotalLength    uint16
+	Identification uint16
+
+	Flags          uint8
+	FragmentOffset uint16
+
+	TTL      uint8
+	Protocol uint8
+
+	HeaderChecksum uint16
+
+	SrcIP net.IP
+	DstIP net.IP
+
+	Payload []byte
+}
+type IPv6Packet struct {
+	ip           string
+	Version      uint8
+	TrafficClass uint8
+	FlowLabel    uint32
+	PayloadLen   uint16
+	NextHeader   uint8
+	HopLimit     uint8
+	SrcIP        net.IP
+	DstIP        net.IP
+	Payload      []byte
+}
+type EthernetFrame struct {
+	DstMAC    net.HardwareAddr
+	SrcMAC    net.HardwareAddr
+	EtherType uint16
+
+	Payload []byte // IPv4 / IPv6 / others
+}
 type ifreq struct {
 	Name [syscall.IFNAMSIZ]byte
 	_    [16]byte
@@ -82,7 +143,6 @@ func GetBuffLen(fd int) (int, error) {
 // One Read() can return multiple packets — each prefixed by a BPF header.
 func ParseRawData(data []byte) {
 	offset := 0
-	fmt.Println("Len of data: ", len(data))
 	for offset < len(data) {
 		hdr := (*unix.BpfHdr)(unsafe.Pointer(&data[offset])) //reinterpret cast bytes to struct Go
 		hdrLen := int(hdr.Hdrlen)
@@ -105,42 +165,116 @@ func BPF_WORDALIGN(x int) int {
 }
 
 func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-networks/ethernet-frame-format/
-	fmt.Println("This is a single frame: ", frame)
 	macDst := net.HardwareAddr(frame[0:6])
 	macSrc := net.HardwareAddr(frame[6:12])
-	fmt.Println("Dst mac addr: ", macDst)
-	fmt.Println("Src mac addr: ", macSrc)
 	etherType := binary.BigEndian.Uint16(frame[12:14]) //The network byte order is defined to always be big-endian (https://www.ibm.com/docs/ja/zvm/7.2.0?topic=domains-network-byte-order-host-byte-order)
-	switch etherType {
+	etherFrame := EthernetFrame{
+		DstMAC:    macDst,
+		SrcMAC:    macSrc,
+		EtherType: etherType,
+		Payload:   frame[14:],
+	}
+	fmt.Printf("%+v\n", etherFrame)
+	switch etherFrame.EtherType {
 	case EtherTypeIPv6:
-		fmt.Println("Ipv6")
-		parseIpv6(frame[14:])
+		parseIpv6(etherFrame.Payload)
 	case EtherTypeIPv4:
-		fmt.Println("Ipv4")
-		parseIPv4(frame[14:])
+		parseIPv4(etherFrame.Payload)
 	default:
-		fmt.Println("Some thing unknown: ", etherType)
+		fmt.Println("Some thing unknown: ", etherFrame.EtherType)
 	}
 }
 
 func parseIPv4(packets []byte) {
+	if len(packets) < 20 {
+		fmt.Println("To small to be IPV4")
+		return
+	}
 	//parsing: https://www.tutorialspoint.com/ipv4/ipv4_packet_structure.htm
-
 	firstByte := packets[0]
+
 	version := firstByte >> 4 //Extract first 4 bits
 	ihl := firstByte & 0x0F   //why 15 because its binayr is 1111 and we will only be needing last 4 bits
-	fmt.Println("Version:", version)
-	fmt.Println("IHL:", ihl)
+
 	secondByte := packets[1]
 	dscp := secondByte >> 2
 	ecn := secondByte & 0x03
-	fmt.Println("DSCP: ", dscp)
-	fmt.Println("ECN: ", ecn)
-	bytes2ndAnd3rd := packets[2:4]
-	totalLen := binary.BigEndian.Uint16(bytes2ndAnd3rd)
-	fmt.Println("Entire ip packet size: ", totalLen, "Bytes")
+
+	totalLen := binary.BigEndian.Uint16(packets[2:4])
+	identification := binary.BigEndian.Uint16(packets[4:6]) //https://networkengineering.stackexchange.com/questions/46514/identification-field-in-ipv4-header
+
+	flags := packets[6] >> 5
+	fragmentOffset := (uint16(packets[6]&0x1F) << 8) | uint16(packets[7])
+
+	ttl := packets[8]
+	proto := packets[9]
+
+	headerChecksum := binary.BigEndian.Uint16(packets[10:12])
+
+	srcIP := net.IP(packets[12:16])
+	dstIP := net.IP(packets[16:20])
+
+	ipv4 := IPv4Packet{
+		ip:             "IPV4",
+		Version:        version,
+		IHL:            ihl,
+		DSCP:           dscp,
+		ECN:            ecn,
+		TotalLength:    totalLen,
+		Identification: identification,
+		Flags:          flags,
+		FragmentOffset: fragmentOffset,
+		TTL:            ttl,
+		Protocol:       proto,
+		HeaderChecksum: headerChecksum,
+		SrcIP:          srcIP,
+		DstIP:          dstIP,
+		Payload:        packets[ihl*4:],
+	}
+	fmt.Printf("%+v\n", ipv4)
 }
 
+// IPv6 header is fixed at 40 bytes (unlike IPv4's variable IHL)
+// https://www.geeksforgeeks.org/computer-networks/internet-protocol-version-6-ipv6-header/
 func parseIpv6(packets []byte) {
-	fmt.Println("Parsing this ipv6 data: ", packets)
+	if len(packets) < 40 {
+		fmt.Println("IPv6 packet too short")
+		return
+	}
+
+	// First 4 bytes pack: version (4b), traffic class (8b), flow label (20b)
+	firstWord := binary.BigEndian.Uint32(packets[0:4])
+
+	version := uint8(firstWord >> 28)
+	trafficClass := uint8((firstWord >> 20) & 0xFF)
+	flowLabel := firstWord & 0x000FFFFF
+
+	payloadLen := binary.BigEndian.Uint16(packets[4:6])
+	nextHeader := packets[6]
+	hopLimit := packets[7]
+
+	srcIP := net.IP(packets[8:24])
+	dstIP := net.IP(packets[24:40])
+
+	ipv6 := IPv6Packet{
+		ip:           "IPV6",
+		Version:      version,
+		TrafficClass: trafficClass,
+		FlowLabel:    flowLabel,
+		PayloadLen:   payloadLen,
+		NextHeader:   nextHeader,
+		HopLimit:     hopLimit,
+		SrcIP:        srcIP,
+		DstIP:        dstIP,
+		Payload:      packets[40:],
+	}
+
+	fmt.Printf("%+v\n", ipv6)
+
+	// NextHeader reuses the same protocol numbers as IPv4's Protocol field
+	if name, ok := protocols[nextHeader]; ok {
+		fmt.Printf("Next Header Protocol: %s\n", name)
+	} else {
+		fmt.Printf("Next Header Protocol: unknown (%d)\n", nextHeader)
+	}
 }
