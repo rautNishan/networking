@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -20,6 +21,10 @@ var protocols = map[uint8]string{
 	132: "SCTP",
 }
 
+const (
+	DLT_NULL   = 0 // BSD loopback (lo0)
+	DLT_EN10MB = 1 // Ethernet (en0, en1)
+)
 const (
 	ICMP  = 1
 	IGMP  = 2
@@ -130,7 +135,14 @@ func BindInterface(fd int, iface string) error {
 	}
 	return nil
 }
-
+func GetLinkType(fd int) (uint32, error) {
+	var linkType uint32
+	_, _, errno := unix.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCGDLT), uintptr(unsafe.Pointer(&linkType)))
+	if errno != 0 {
+		return 0, fmt.Errorf("BIOCGDLT failed: %w", errno)
+	}
+	return linkType, nil
+}
 func GetBuffLen(fd int) (int, error) {
 	var size uint32
 	_, _, err := unix.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCGBLEN), uintptr(unsafe.Pointer(&size)))
@@ -141,20 +153,20 @@ func GetBuffLen(fd int) (int, error) {
 }
 
 // One Read() can return multiple packets — each prefixed by a BPF header.
-func ParseRawData(data []byte) {
+func ParseRawData(data []byte, linkType uint32) {
 	offset := 0
 	for offset < len(data) {
 		hdr := (*unix.BpfHdr)(unsafe.Pointer(&data[offset])) //reinterpret cast bytes to struct Go
 		hdrLen := int(hdr.Hdrlen)
 		capLen := int(hdr.Caplen)
-		fmt.Println("Header len: ", hdrLen, " cap len: ", capLen)
+		// fmt.Println("Header len: ", hdrLen, " cap len: ", capLen)
 		if hdrLen+capLen == 0 || offset+hdrLen+capLen > len(data) {
 			break
 		}
 		frameStart := offset + hdrLen
 		frameEnd := frameStart + capLen
 		frame := data[frameStart:frameEnd]
-		ParseFrame(frame)
+		ParseFrame(frame, linkType)
 		total := BPF_WORDALIGN(hdrLen + capLen)
 		offset += total
 	}
@@ -164,7 +176,10 @@ func BPF_WORDALIGN(x int) int {
 	return (x + (unix.BPF_ALIGNMENT - 1)) & ^(unix.BPF_ALIGNMENT - 1) //https://stackoverflow.com/questions/34459450/what-is-the-operator-in-golang
 }
 
-func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-networks/ethernet-frame-format/
+func ParseFrame(frame []byte, linkType uint32) { //https://www.geeksforgeeks.org/computer-networks/ethernet-frame-format/
+	if linkType == DLT_NULL {
+		parseBSDLoopback(frame)
+	}
 	macDst := net.HardwareAddr(frame[0:6])
 	macSrc := net.HardwareAddr(frame[6:12])
 	etherType := binary.BigEndian.Uint16(frame[12:14]) //The network byte order is defined to always be big-endian (https://www.ibm.com/docs/ja/zvm/7.2.0?topic=domains-network-byte-order-host-byte-order)
@@ -185,7 +200,7 @@ func ParseFrame(frame []byte) { //https://www.geeksforgeeks.org/computer-network
 	}
 }
 
-func parseIPv4(packets []byte) {
+func parseIPv4(packets []byte) { //https://www.geeksforgeeks.org/computer-networks/tcp-ip-packet-format/
 	if len(packets) < 20 {
 		fmt.Println("To small to be IPV4")
 		return
@@ -231,7 +246,31 @@ func parseIPv4(packets []byte) {
 		DstIP:          dstIP,
 		Payload:        packets[ihl*4:],
 	}
-	fmt.Printf("%+v\n", ipv4)
+	// fmt.Printf("%+v\n", ipv4)
+	switch ipv4.Protocol {
+	case TCP:
+		parseTCP(ipv4.Payload)
+	case UDP:
+		parseUDP(ipv4.Payload)
+	}
+}
+
+func parseBSDLoopback(frame []byte) {
+	if len(frame) < 4 {
+		return
+	}
+	// 4-byte AF family in host byte order (not big-endian!)
+	afFamily := *(*uint32)(unsafe.Pointer(&frame[0]))
+	payload := frame[4:]
+
+	switch afFamily {
+	case unix.AF_INET: // 2
+		parseIPv4(payload)
+	case unix.AF_INET6: // 30 on macOS
+		parseIpv6(payload)
+	default:
+		fmt.Printf("Unknown AF family: %d\n", afFamily)
+	}
 }
 
 // IPv6 header is fixed at 40 bytes (unlike IPv4's variable IHL)
@@ -269,7 +308,7 @@ func parseIpv6(packets []byte) {
 		Payload:      packets[40:],
 	}
 
-	fmt.Printf("%+v\n", ipv6)
+	// fmt.Printf("%+v\n", ipv6)
 
 	// NextHeader reuses the same protocol numbers as IPv4's Protocol field
 	if name, ok := protocols[nextHeader]; ok {
@@ -277,4 +316,61 @@ func parseIpv6(packets []byte) {
 	} else {
 		fmt.Printf("Next Header Protocol: unknown (%d)\n", nextHeader)
 	}
+	switch ipv6.NextHeader {
+	case TCP:
+		parseTCP(ipv6.Payload)
+	case UDP:
+		parseUDP(ipv6.Payload)
+	}
+}
+
+func parseTCP(segments []byte) { //https://support.huawei.com/enterprise/en/doc/EDOC1100174721/ecc2fe2f/tcp
+	if len(segments) < 4 {
+		fmt.Println("Segment too short for TCP header")
+		return
+	}
+	srcPort := binary.BigEndian.Uint16(segments[0:2])
+	dstPort := binary.BigEndian.Uint16(segments[2:4])
+	if srcPort != 3000 && dstPort != 3000 {
+		return
+	}
+
+	sqNumber := binary.BigEndian.Uint32(segments[4:8])
+	fmt.Println("This is seq number: ", sqNumber)
+	ackNum := binary.BigEndian.Uint32(segments[8:12])
+	fmt.Println("Ack num: ", ackNum)
+	dataOffset := segments[12] >> 4
+	if dataOffset < 5 && dataOffset > 15 {
+		fmt.Println("Min size header is 5 words and the max is 15 words")
+		return
+	}
+	reversed := segments[12] & 0xF
+	fmt.Println("Data offset: ", dataOffset)
+	fmt.Println("Reversed: ", reversed)
+	cwr := segments[13] >> 7
+	ece := (segments[13] >> 6) & 0x1
+	urg := (segments[13] >> 5) & 0x1
+	ack := (segments[13] >> 4) & 0x1
+	psh := (segments[13] >> 3) & 0x1
+	rst := (segments[13] >> 2) & 0x1
+	sync := (segments[13] >> 1) & 0x1
+	fin := segments[13] & 0x1
+	fmt.Println("cwr: ", cwr, " ece: ", ece, " urg: ", urg, " ack: ", ack, " psh: ", psh, " rst: ", rst, " sync: ", sync, " fin: ", fin)
+	checksum := binary.BigEndian.Uint16(segments[16:18])
+	fmt.Println("This is checksum: ", checksum)
+	urgentPointer := binary.BigEndian.Uint16(segments[18:20])
+	fmt.Println("UrgentPointer: ", urgentPointer)
+	tcpHeaderLen := int(dataOffset) * 4
+	tcpOptions := segments[20:tcpHeaderLen]
+	data := segments[tcpHeaderLen:]
+	fmt.Println("Tcp Options: ", tcpOptions)
+	fmt.Println("Data: ", data)
+	lines := strings.Split(string(data), "\r\n")
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+}
+
+func parseUDP(datagrams []byte) {
+	fmt.Println("Parsing UDP")
 }

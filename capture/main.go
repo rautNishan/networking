@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	iface := "en0"
+	iface := "lo0"
 	if len(os.Args) > 1 {
 		iface = os.Args[1]
 	}
@@ -24,6 +24,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error while binding interface:", err)
 		os.Exit(1)
 	}
+
+	linkType, err := GetLinkType(fd)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error getting link type:", err)
+		os.Exit(1)
+	}
+	fmt.Println("Link type:", linkType)
 
 	if err := SetImmediate(fd); err != nil {
 		fmt.Fprintln(os.Stderr, "Error in set immediate:", err)
@@ -44,7 +51,6 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			break
 		}
-		ParseRawData(buffer[:n])
-		break
+		ParseRawData(buffer[:n], linkType)
 	}
 }
