@@ -9,6 +9,7 @@ Built with Go + BPF on macOS/BSD. **Currently supported on macOS only.**
 ## Demo
 
 ```
+cd capture
 sudo go run . en0 3000
 ```
 
