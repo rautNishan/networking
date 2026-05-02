@@ -2,7 +2,7 @@
 
 A real-time network packet inspector that captures TCP traffic on a given interface and streams parsed events to a browser via WebSocket.
 
-Built with Go + BPF on macOS/BSD.
+Built with Go + BPF on macOS/BSD. **Currently supported on macOS only.**
 
 ---
 ![Demo](image.png)
