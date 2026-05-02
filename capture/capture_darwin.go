@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -562,8 +561,8 @@ func (p *Parser) parseTCP(data []byte, pkt *ParsedPacket) bool { //https://suppo
 		Options:    data[20:hdrEnd],
 		Payload:    data[hdrEnd:],
 	}
-	b, _ := json.MarshalIndent(layer, "", "  ")
-	fmt.Println(string(b))
+	// b, _ := json.MarshalIndent(layer, "", "  ")
+	// fmt.Println(string(b))
 	pkt.Transport = &TransportLayer{TCP: layer}
 	if len(layer.Payload) > 0 {
 		p.parseApp(layer.Payload, layer.DstPort, pkt)
