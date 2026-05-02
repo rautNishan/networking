@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>netvis · live capture</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #080a0d;
+      --s1: #0d1117;
+      --s2: #161b22;
+      --s3: #21262d;
+      --border: #30363d;
+      --border2: #444c56;
+      --text: #e6edf3;
+      --muted: #7d8590;
+      --dim: #3d444d;
+      --c-hs: #58a6ff;
+      --c-est: #3fb950;
+      --c-td: #f0883e;
+      --c-cl: #f85149;
+      --c-udp: #d2a8ff;
+      --c-ack: #7d8590;
+      --l7: #58a6ff;
+      --l4: #3fb950;
+      --l3: #e3b341;
+      --l2: #d2a8ff;
+      --l1: #f47067;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Inter', sans-serif;
+      --radius: 6px;
+      --text: #ffffff;
+      --muted: rgba(255, 255, 255, 0.7);
+      --dim: rgba(255, 255, 255, 0.4);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 44px 1fr;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 18px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .logo {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      letter-spacing: .06em;
+    }
+
+    .logo em {
+      color: var(--c-est);
+      font-style: normal;
+    }
+
+    .ws-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--dim);
+      transition: background .3s;
+    }
+
+    .ws-dot.live {
+      background: var(--c-est);
+      box-shadow: 0 0 6px var(--c-est);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .45
+      }
+    }
+
+    .ws-label {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .hdr-stats {
+      margin-left: auto;
+      display: flex;
+      gap: 18px;
+    }
+
+    .stat {
+      text-align: right;
+    }
+
+    .stat-v {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .stat-k {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: .06em;
+    }
+
+    /* ── Main workspace ── */
+    .workspace {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr auto;
+      overflow: hidden;
+    }
+
+    /* ── Top: dual OSI + wire ── */
+    .vis-row {
+      display: grid;
+      grid-template-columns: 500px 1fr 500px;
+      grid-column: 1 / -1;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── OSI Panel ── */
+    .osi-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--border);
+    }
+
+    .osi-panel.right {
+      border-right: none;
+      border-left: 1px solid var(--border);
+    }
+
+    .panel-hdr {
+      padding: 7px 12px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--border);
+      font-size: 9px;
+      letter-spacing: .12em;
+      color: var(--muted);
+      text-transform: uppercase;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-hdr .role-badge {
+      font-size: 8px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 600;
+      letter-spacing: .05em;
+    }
+
+    .client-badge {
+      background: color-mix(in srgb, var(--c-hs) 14%, transparent);
+      color: var(--c-hs);
+      border: 1px solid color-mix(in srgb, var(--c-hs) 28%, transparent);
+    }
+
+    .server-badge {
+      background: color-mix(in srgb, var(--c-est) 14%, transparent);
+      color: var(--c-est);
+      border: 1px solid color-mix(in srgb, var(--c-est) 28%, transparent);
+    }
+
+    .osi-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 6px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border2) transparent;
+    }
+
+    /* Direction arrows on panel headers */
+    .dir-arrow {
+      margin-left: auto;
+      font-size: 16px;
+      opacity: 0.35;
+    }
+
+    /* ── OSI layers ── */
+    .layer {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px 6px 11px;
+      margin-bottom: 4px;
+      transition: border-color .15s, background .15s, box-shadow .15s;
+      overflow: hidden;
+    }
+
+    .layer::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--lc, var(--border));
+      border-radius: var(--radius) 0 0 var(--radius);
+    }
+
+    .layer-num {
+      font-size: 15px;
+      color: var(--dim);
+      letter-spacing: .05em;
+      margin-bottom: 1px;
+    }
+
+    .layer-name {
+      font-size: 20px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .layer-sub {
+      font-size: 15px;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .layer-data {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 3px;
+      max-height: 120;
+      overflow: hidden;
+      opacity: 0;
+      transition: max-height .2s, opacity .2s;
+      word-break: break-all;
+      line-height: 1.6;
+    }
+
+    .layer.lit {
+      border-color: var(--lc);
+      background: color-mix(in srgb, var(--lc) 8%, var(--s2));
+      box-shadow: 0 0 10px color-mix(in srgb, var(--lc) 18%, transparent);
+    }
+
+    .layer.lit .layer-name {
+      color: var(--lc);
+    }
+
+    .layer.lit .layer-data {
+      max-height: 50px;
+      opacity: 1;
+    }
+
+    /* Sequential order labels for direction */
+    .layer-order {
+      position: absolute;
+      right: 7px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 8px;
+      color: var(--dim);
+      font-weight: 600;
+    }
+
+    .layer.lit .layer-order {
+      color: var(--lc);
+      opacity: 0.6;
+    }
+
+    /* ── Center wire panel ── */
+    .wire-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    /* Handshake bar */
+    .hs-bar {
+      padding: 7px 10px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .hs-step {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 20px;
+      font-size: 9px;
+      color: var(--muted);
+      transition: background .2s, color .2s;
+      white-space: nowrap;
+    }
+
+    .hs-step.done {
+      color: var(--c-est);
+    }
+
+    .hs-step.active {
+      background: color-mix(in srgb, var(--c-hs) 12%, transparent);
+      color: var(--c-hs);
+    }
+
+    .hs-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--dim);
+      transition: background .2s;
+    }
+
+    .hs-step.done .hs-dot {
+      background: var(--c-est);
+    }
+
+    .hs-step.active .hs-dot {
+      background: var(--c-hs);
+      animation: pulse 1s infinite;
+    }
+
+    .hs-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Endpoint labels */
+    .endpoints-bar {
+      display: flex;
+      justify-content: space-between;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--s2);
+      flex-shrink: 0;
+    }
+
+    .endpoint {
+      text-align: center;
+    }
+
+    .ep-role {
+      font-size: 8px;
+      color: var(--muted);
+      letter-spacing: .08em;
+      margin-bottom: 2px;
+    }
+
+    .ep-ip {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .ep-port {
+      font-size: 9px;
+      color: var(--muted);
+    }
+
+    .ep-phase {
+      display: inline-block;
+      margin-top: 3px;
+      font-size: 8px;
+      padding: 1px 5px;
+      border-radius: 10px;
+      background: var(--dim);
+      color: var(--muted);
+      transition: background .3s, color .3s;
+    }
+
+    /* Wire + bubble */
+    .wire-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 50px;
+    }
+
+    .wire-line {
+      position: absolute;
+      top: 50%;
+      left: 100px;
+      right: 100px;
+      height: 2px;
+      background: #ffffff;
+      opacity: 0.35;
+    }
+
+    .wire-label {
+      position: absolute;
+      top: calc(50% - 16px);
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      color: var(--dim);
+      letter-spacing: .08em;
+    }
+
+    .pkt-bubble {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 10px 14px;
+      border-radius: 14px;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      box-shadow: 0 0 18px rgba(0, 0, 0, 0.5);
+      min-width: 90px;
+    }
+
+    .pkt-main {
+      font-size: 30px;
+      font-weight: 900;
+    }
+
+    .pkt-sub {
+      font-size: 25px;
+      opacity: 0.75;
+      margin-top: 3px;
+    }
+
+    /* Phase strip */
+    .phase-strip {
+      padding: 4px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--s1);
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      min-height: 26px;
+    }
+
+    .phase-badge {
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 8px;
+      font-weight: 500;
+      background: var(--dim);
+      color: var(--muted);
+      transition: background .3s, color .3s;
+      white-space: nowrap;
+    }
+
+    /* ── Bottom row: event log + detail ── */
+    .bottom-row {
+      display: grid;
+      grid-template-columns: 1fr 600px;
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--border);
+      height: 40vh;
+      min-height: 300px;
+    }
+
+    .event-log {
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border2) transparent;
+      border-right: 1px solid var(--border);
+    }
+
+    .ev-row {
+      display: grid;
+      grid-template-columns: 68px 80px 1fr;
+      gap: 6px;
+      padding: 4px 12px;
+      border-bottom: 1px solid var(--s3);
+      animation: slideIn .15s ease;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .ev-row:hover {
+      background: var(--s2);
+    }
+
+    .ev-row.sel {
+      background: var(--s3);
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-4px);
+      }
+    }
+
+    .ev-time {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .ev-badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 3px;
+      text-align: center;
+      background: color-mix(in srgb, var(--bc) 14%, transparent);
+      color: var(--bc);
+      border: 1px solid color-mix(in srgb, var(--bc) 28%, transparent);
+    }
+
+    .ev-summary {
+      font-size: 10px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Detail panel */
+    .detail-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      height: 100%;
+    }
+
+    .detail-hdr {
+      padding: 10px 15px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--border);
+      font-size: 20px;
+      letter-spacing: .1em;
+      color: var(--muted);
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .filter-wrap {
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .filter-input {
+      width: 100%;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 3px 7px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text);
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .filter-input:focus {
+      border-color: var(--c-hs);
+    }
+
+    .filter-input::placeholder {
+      color: var(--dim);
+    }
+
+    .detail-body {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border2) transparent;
+    }
+
+    .detail-empty {
+      color: var(--dim);
+      font-size: 10px;
+      text-align: center;
+      margin-top: 20px;
+      line-height: 1.9;
+    }
+
+    .d-section {
+      border-bottom: 1px solid var(--s3);
+      padding: 5px 10px;
+    }
+
+    .d-section-title {
+      font-size: 8px;
+      letter-spacing: .1em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .d-kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 1px 0;
+    }
+
+    .d-k {
+      color: var(--muted);
+      font-size: 9px;
+      flex-shrink: 0;
+    }
+
+    .d-v {
+      color: var(--text);
+      font-size: 9px;
+      text-align: right;
+      word-break: break-all;
+    }
+
+    /* OSI flow arrows between client→wire and wire→server */
+    .osi-flow-label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 0 2px;
+    }
+
+    .flow-arrow {
+      font-size: 11px;
+      color: var(--dim);
+      transition: color .3s;
+    }
+
+    .flow-arrow.active {
+      color: var(--c-hs);
+    }
+
+    .flow-arrow.done {
+      color: var(--c-est);
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <div class="logo">net<em>vis</em></div>
+    <div class="ws-dot" id="wsDot"></div>
+    <div class="ws-label" id="wsLabel">connecting…</div>
+    <div class="hdr-stats">
+      <div class="stat">
+        <div class="stat-v" id="stTotal">0</div>
+        <div class="stat-k">PKTS</div>
+      </div>
+      <div class="stat">
+        <div class="stat-v" id="stTCP">0</div>
+        <div class="stat-k">TCP</div>
+      </div>
+      <div class="stat">
+        <div class="stat-v" id="stUDP">0</div>
+        <div class="stat-k">UDP</div>
+      </div>
+      <div class="stat">
+        <div class="stat-v" id="stBytes">0B</div>
+        <div class="stat-k">BYTES</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="workspace">
+
+    <!-- TOP ROW: CLIENT OSI | WIRE | SERVER OSI -->
+    <div class="vis-row">
+
+      <!-- CLIENT OSI (L7→L1 encapsulation) -->
+      <div class="osi-panel">
+        <div class="panel-hdr">
+          <span class="role-badge client-badge">CLIENT</span>
+          OSI · Encapsulation
+          <span class="dir-arrow">↓</span>
+        </div>
+        <div class="osi-body" id="clientOSI">
+          <div class="layer" id="cl7" style="--lc:var(--l7)">
+            <div class="layer-order">①</div>
+            <div class="layer-num">LAYER 7</div>
+            <div class="layer-name">Application</div>
+            <div class="layer-sub">HTTP · DNS · TLS</div>
+            <div class="layer-data" id="cl7d"></div>
+          </div>
+          <div class="layer" id="cl4" style="--lc:var(--l4)">
+            <div class="layer-order">②</div>
+            <div class="layer-num">LAYER 4</div>
+            <div class="layer-name">Transport</div>
+            <div class="layer-sub">TCP · UDP</div>
+            <div class="layer-data" id="cl4d"></div>
+          </div>
+          <div class="layer" id="cl3" style="--lc:var(--l3)">
+            <div class="layer-order">③</div>
+            <div class="layer-num">LAYER 3</div>
+            <div class="layer-name">Network</div>
+            <div class="layer-sub">IPv4 · IPv6 · ICMP</div>
+            <div class="layer-data" id="cl3d"></div>
+          </div>
+          <div class="layer" id="cl2" style="--lc:var(--l2)">
+            <div class="layer-order">④</div>
+            <div class="layer-num">LAYER 2</div>
+            <div class="layer-name">Data Link</div>
+            <div class="layer-sub">Ethernet · ARP</div>
+            <div class="layer-data" id="cl2d"></div>
+          </div>
+          <div class="layer" id="cl1" style="--lc:var(--l1)">
+            <div class="layer-order">⑤</div>
+            <div class="layer-num">LAYER 1</div>
+            <div class="layer-name">Physical</div>
+            <div class="layer-sub">Bits on wire</div>
+            <div class="layer-data" id="cl1d"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER WIRE -->
+      <div class="wire-panel">
+        <!-- Handshake progress -->
+        <div class="hs-bar">
+          <div class="hs-step" id="hsSYN">
+            <div class="hs-dot"></div>SYN
+          </div>
+          <div class="hs-line"></div>
+          <div class="hs-step" id="hsSA">
+            <div class="hs-dot"></div>SYN-ACK
+          </div>
+          <div class="hs-line"></div>
+          <div class="hs-step" id="hsACK">
+            <div class="hs-dot"></div>ACK · Open
+          </div>
+        </div>
+
+        <!-- Endpoints -->
+        <div class="endpoints-bar">
+          <div class="endpoint">
+            <div class="ep-role">CLIENT</div>
+            <div class="ep-ip" id="clientIP">—</div>
+            <div class="ep-port" id="clientPort"></div>
+            <div class="ep-phase" id="clientPhase">idle</div>
+          </div>
+          <div class="endpoint">
+            <div class="ep-role">SERVER</div>
+            <div class="ep-ip" id="serverIP">—</div>
+            <div class="ep-port" id="serverPort"></div>
+            <div class="ep-phase" id="serverPhase">listening</div>
+          </div>
+        </div>
+
+        <!-- Wire animation -->
+        <div class="wire-area" id="wireArea">
+          <div class="wire-line"></div>
+          <div class="wire-label">wire / BPF tap</div>
+        </div>
+
+        <!-- Phase strip -->
+        <div class="phase-strip">
+          <div class="phase-badge" id="phaseBadge">idle</div>
+          <div id="phaseSummary" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:9px">
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVER OSI (L1→L7 decapsulation) -->
+      <div class="osi-panel right">
+        <div class="panel-hdr">
+          <span class="role-badge server-badge">SERVER</span>
+          OSI · Decapsulation
+          <span class="dir-arrow">↑</span>
+        </div>
+
+        <div class="osi-body" id="serverOSI">
+
+          <!-- L7 at top (same pattern as client) -->
+          <div class="layer" id="sl7" style="--lc:var(--l7)">
+            <div class="layer-order">①</div>
+            <div class="layer-num">LAYER 7</div>
+            <div class="layer-name">Application</div>
+            <div class="layer-sub">HTTP · DNS · TLS</div>
+            <div class="layer-data" id="sl7d"></div>
+          </div>
+
+          <div class="layer" id="sl4" style="--lc:var(--l4)">
+            <div class="layer-order">②</div>
+            <div class="layer-num">LAYER 4</div>
+            <div class="layer-name">Transport</div>
+            <div class="layer-sub">TCP · UDP</div>
+            <div class="layer-data" id="sl4d"></div>
+          </div>
+
+          <div class="layer" id="sl3" style="--lc:var(--l3)">
+            <div class="layer-order">③</div>
+            <div class="layer-num">LAYER 3</div>
+            <div class="layer-name">Network</div>
+            <div class="layer-sub">IPv4 · IPv6 · ICMP</div>
+            <div class="layer-data" id="sl3d"></div>
+          </div>
+
+          <div class="layer" id="sl2" style="--lc:var(--l2)">
+            <div class="layer-order">④</div>
+            <div class="layer-num">LAYER 2</div>
+            <div class="layer-name">Data Link</div>
+            <div class="layer-sub">Ethernet · ARP</div>
+            <div class="layer-data" id="sl2d"></div>
+          </div>
+
+          <!-- L1 at bottom -->
+          <div class="layer" id="sl1" style="--lc:var(--l1)">
+            <div class="layer-order">⑤</div>
+            <div class="layer-num">LAYER 1</div>
+            <div class="layer-name">Physical</div>
+            <div class="layer-sub">Bits received</div>
+            <div class="layer-data" id="sl1d"></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /vis-row -->
+
+    <!-- BOTTOM ROW: event log + detail -->
+    <div class="bottom-row">
+      <div class="event-log" id="eventLog"></div>
+
+      <div class="detail-panel">
+        <div class="detail-hdr">Packet detail</div>
+        <div class="filter-wrap">
+          <input class="filter-input" id="filterInput" type="text" placeholder="ip · port · kind · proto">
+        </div>
+        <div class="detail-body" id="detailBody">
+          <div class="detail-empty">← tap an event<br>to inspect</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+
+  <script>
+    const LAYER_DELAY = 500;
+    const PHASE_PAUSE = 800;
+    const KIND_COLOR = {
+      'SYN': '#58a6ff',
+      'SYN-ACK': '#58a6ff',
+      'Data': '#3fb950',
+      'FIN': '#f0883e',
+      'FIN-ACK': '#f0883e',
+      'RST': '#f85149',
+      'ACKOnly': '#7d8590',
+      'UDP': '#d2a8ff',
+    };
+
+    const evLog = [];
+    const eventQueue = [];
+    let processing = false;
+    const stats = { total: 0, tcp: 0, udp: 0, bytes: 0 };
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    /* ── WebSocket ── */
+    function connect() {
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.onopen = () => {
+        document.getElementById('wsDot').classList.add('live');
+        document.getElementById('wsLabel').textContent = 'live';
+      };
+      ws.onmessage = (e) => {
+        const ev = JSON.parse(e.data);
+        console.log(ev);
+        
+        eventQueue.push(ev);
+        if (!processing) processQueue();
+      };
+      ws.onclose = () => {
+        document.getElementById('wsDot').classList.remove('live');
+        document.getElementById('wsLabel').textContent = 'reconnecting…';
+        setTimeout(connect, 1500);
+      };
+    }
+    connect();
+
+    /* ── Event queue ── */
+    async function processQueue() {
+      processing = true;
+      while (eventQueue.length > 0) {
+        const ev = eventQueue.shift();
+        stats.total++;
+        if (ev.tcp_src_port) stats.tcp++;
+        if (ev.udp_src_port) stats.udp++;
+        updateStats();
+        await runEvent(ev);
+      }
+      processing = false;
+    }
+
+    /* ── Main flow ── */
+    async function runEvent(ev) {
+      clearAllLayers();
+      const clientSends = ev.direction !== '←'; // → means client→server, ← means server→client
+
+      updatePanelHeaders(clientSends);
+
+      // SENDER encapsulates L7→L1, RECEIVER decapsulates L1→L7
+      if (clientSends) {
+        setPhase('CLIENT ENCAPSULATING');
+        await animateEncap('client', ev);
+        await animateWire(ev);
+        setPhase('SERVER DECAPSULATING');
+        await animateDecap('server', ev);
+      } else {
+        setPhase('SERVER ENCAPSULATING');
+        await animateEncap('server', ev);
+        await animateWire(ev);
+        setPhase('CLIENT DECAPSULATING');
+        await animateDecap('client', ev);
+      }
+
+      appendLogRow(ev);
+      showDetail(ev);
+      await sleep(PHASE_PAUSE);
+      clearAllLayers();
+    }
+
+    /* ── Update panel header labels ── */
+    function updatePanelHeaders(clientSends) {
+      const leftHdr = document.getElementById('leftPanelHdr');
+      const rightHdr = document.getElementById('rightPanelHdr');
+      const leftArrow = document.getElementById('leftDirArrow');
+      const rightArrow = document.getElementById('rightDirArrow');
+
+      if (!leftHdr || !rightHdr || !leftArrow || !rightArrow) return;
+
+      if (clientSends) {
+        leftHdr.textContent = 'OSI · Encapsulation';
+        rightHdr.textContent = 'OSI · Decapsulation';
+        leftArrow.textContent = '↓';
+        rightArrow.textContent = '↑';
+      } else {
+        leftHdr.textContent = 'OSI · Decapsulation';
+        rightHdr.textContent = 'OSI · Encapsulation';
+        leftArrow.textContent = '↑';
+        rightArrow.textContent = '↓';
+      }
+    }
+    /* ── ENCAPSULATION: L7 → L1 on given side ── */
+    async function animateEncap(side, ev) {
+      const control = isControlPacket(ev);
+
+      if (side === 'client') {
+
+        // ── L7 ONLY for real data packets ──
+        if (!control) {
+          const appData = ev.app_proto || 'DATA';
+          lit('cl7', appData);
+          await sleep(LAYER_DELAY);
+        }
+
+        // ── L4 ALWAYS (this is where SYN/FIN belong) ──
+        const tcpPayload = control ? ev.kind : (ev.app_proto || 'DATA');
+        const tcpSeg = `[${ev.conn_src_port} | ${tcpPayload} | ${ev.conn_dst_port}]`;
+        lit('cl4', tcpSeg);
+        await sleep(LAYER_DELAY);
+
+        // ── L3 ──
+        const ipPkt = `[${ev.conn_src_ip} | ${tcpSeg} | ${ev.conn_dst_ip}]`;
+        lit('cl3', ipPkt);
+        await sleep(LAYER_DELAY);
+
+        // ── L2 ──
+        const ethFrm = `[${ev.eth_src_mac} | ${ipPkt} | ${ev.eth_dst_mac}]`;
+        lit('cl2', ethFrm);
+        await sleep(LAYER_DELAY);
+
+        // ── L1 ──
+        lit('cl1', '101010… (serialized)');
+        await sleep(LAYER_DELAY);
+      }
+
+      else {
+        // server side same logic
+        if (!control) {
+          const appData = ev.app_proto || 'DATA';
+          lit('sl7', appData);
+          await sleep(LAYER_DELAY);
+        }
+
+        const tcpPayload = control ? ev.kind : (ev.app_proto || 'DATA');
+        const tcpSeg = `[${ev.conn_src_port} | ${tcpPayload} | ${ev.conn_dst_port}]`;
+        lit('sl4', tcpSeg);
+        await sleep(LAYER_DELAY);
+
+        const ipPkt = `[${ev.conn_src_ip} | ${tcpSeg} | ${ev.conn_dst_ip}]`;
+        lit('sl3', ipPkt);
+        await sleep(LAYER_DELAY);
+
+        const ethFrm = `[${ev.eth_src_mac} | ${ipPkt} | ${ev.eth_dst_mac}]`;
+        lit('sl2', ethFrm);
+        await sleep(LAYER_DELAY);
+
+        lit('sl1', '101010… (serialized)');
+        await sleep(LAYER_DELAY);
+      }
+    }
+    /* ── DECAPSULATION: L1 → L7 on given side ── */
+    async function animateDecap(side, ev) {
+      const control = isControlPacket(ev);
+
+      const appData = control ? null : (ev.app_proto || 'DATA');
+
+      const tcpSeg = `[${ev.conn_src_port} | ${control ? ev.kind : appData} | ${ev.conn_dst_port}]`;
+      const ipPkt = `[${ev.conn_src_ip} | ${tcpSeg} | ${ev.conn_dst_ip}]`;
+      const ethFrm = `[${ev.eth_src_mac} | ${ipPkt} | ${ev.eth_dst_mac}]`;
+
+      if (side === 'server') {
+
+        lit('sl1', '101010… (received)');
+        await sleep(LAYER_DELAY);
+
+        lit('sl2', ethFrm + ' → remove MAC');
+        await sleep(LAYER_DELAY);
+
+        lit('sl3', ipPkt + ' → remove IP');
+        await sleep(LAYER_DELAY);
+
+        lit('sl4', tcpSeg + (control ? ' → TCP CONTROL' : ' → extract DATA'));
+        await sleep(LAYER_DELAY);
+
+        // ❗ ONLY show L7 if real application data exists
+        if (!control) {
+          lit('sl7', appData);
+          await sleep(LAYER_DELAY);
+        }
+      }
+
+      else {
+
+        lit('cl1', '101010… (received)');
+        await sleep(LAYER_DELAY);
+
+        lit('cl2', ethFrm + ' → remove MAC');
+        await sleep(LAYER_DELAY);
+
+        lit('cl3', ipPkt + ' → remove IP');
+        await sleep(LAYER_DELAY);
+
+        lit('cl4', tcpSeg + (control ? ' → TCP CONTROL' : ' → extract DATA'));
+        await sleep(LAYER_DELAY);
+
+        if (!control) {
+          lit('cl7', appData);
+          await sleep(LAYER_DELAY);
+        }
+      }
+    }
+    /* ── Wire animation ── */
+    function animateWire(ev) {
+      return new Promise(resolve => {
+        const area = document.getElementById('wireArea');
+        const bubble = document.createElement('div');
+        bubble.className = 'pkt-bubble';
+        const arrow = ev.direction === '←' ? '←' : '→';
+        bubble.innerHTML = `
+  <div class="pkt-main">${ev.kind}</div>
+  <div class="pkt-sub">${ev.conn_src_port} ${arrow} ${ev.conn_dst_port}</div>
+`;
+        const color = KIND_COLOR[ev.kind] || '#7d8590';
+        bubble.style.background = color;
+        bubble.style.color = '#000';
+
+        const W = area.offsetWidth;
+        const margin = 300;
+        const leftToRight = ev.direction !== '←';
+        const startX = leftToRight ? margin : W - margin;
+        const endX = leftToRight ? W - margin : margin;
+        bubble.style.left = startX + 'px';
+        area.appendChild(bubble);
+
+        const duration = 800;
+        const start = performance.now();
+        function frame(t) {
+          const p = Math.min((t - start) / duration, 1);
+          const linear = p;
+          bubble.style.left = (startX + (endX - startX) * p) + 'px';
+          if (p < 1) { requestAnimationFrame(frame); }
+          else { bubble.remove(); resolve(); }
+        }
+        requestAnimationFrame(frame);
+      });
+    }
+
+    /* ── Layer helpers ── */
+    function litClient(id, text) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.add('lit');
+      document.getElementById(id + 'd').textContent = text;
+    }
+    function litServer(id, text) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.add('lit');
+      document.getElementById(id + 'd').textContent = text;
+    }
+    function clearAllLayers() {
+      ['cl7', 'cl4', 'cl3', 'cl2', 'cl1'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.classList.remove('lit'); document.getElementById(id + 'd').textContent = ''; }
+      });
+      ['sl1', 'sl2', 'sl3', 'sl4', 'sl7'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.classList.remove('lit'); document.getElementById(id + 'd').textContent = ''; }
+      });
+    }
+    function setPhase(p) {
+      document.getElementById('phaseBadge').textContent = p;
+    }
+
+    /* ── Stats ── */
+    function updateStats() {
+      document.getElementById('stTotal').textContent = stats.total;
+      document.getElementById('stTCP').textContent = stats.tcp;
+      document.getElementById('stUDP').textContent = stats.udp;
+    }
+
+    /* ── Event log ── */
+    function appendLogRow(ev) {
+      const log = document.getElementById('eventLog');
+      const color = KIND_COLOR[ev.kind] || '#7d8590';
+      const row = document.createElement('div');
+      row.className = 'ev-row';
+      row.style.setProperty('--bc', color);
+      row.innerHTML = `
+    <span class="ev-time">${ev.timestamp || ''}</span>
+    <span class="ev-badge" style="--bc:${color}">${ev.kind}</span>
+    <span class="ev-summary">${ev.summary || (ev.conn_src_ip + ':' + ev.conn_src_port + ' → ' + ev.conn_dst_ip + ':' + ev.conn_dst_port)}</span>
+  `;
+      row.onclick = () => showDetail(ev);
+      log.insertBefore(row, log.firstChild);
+      evLog.unshift(ev);
+    }
+
+    /* ── Detail panel ── */
+    function showDetail(ev) {
+      const body = document.getElementById('detailBody');
+      body.innerHTML = `<div class="d-section">
+  <div class="d-section-title">📦 Packet Info</div>
+
+  <div class="d-kv"><div class="d-k">Kind</div><div class="d-v">${ev.kind || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Phase</div><div class="d-v">${ev.phase || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Direction</div><div class="d-v">${ev.direction || '—'}</div></div>
+</div>
+
+<div class="d-section">
+  <div class="d-section-title">🌐 Network (L3)</div>
+  <div class="d-kv"><div class="d-k">Src IP</div><div class="d-v">${ev.conn_src_ip || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Dst IP</div><div class="d-v">${ev.conn_dst_ip || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Protocol</div><div class="d-v">${ev.ip_proto || '—'}</div></div>
+</div>
+
+<div class="d-section">
+  <div class="d-section-title">🔌 Transport (L4)</div>
+  <div class="d-kv"><div class="d-k">Src Port</div><div class="d-v">${ev.conn_src_port || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Dst Port</div><div class="d-v">${ev.conn_dst_port || '—'}</div></div>
+</div>
+
+<div class="d-section">
+  <div class="d-section-title">📡 Link (L2)</div>
+  <div class="d-kv"><div class="d-k">Src MAC</div><div class="d-v">${ev.eth_src_mac || '—'}</div></div>
+  <div class="d-kv"><div class="d-k">Dst MAC</div><div class="d-v">${ev.eth_dst_mac || '—'}</div></div>
+</div>
+
+<div class="d-section">
+  <div class="d-section-title">⚙️ Application (L7)</div>
+  <div class="d-kv"><div class="d-k">Protocol</div><div class="d-v">${ev.app_proto || '—'}</div></div>
+</div>
+  `;
+    }
+
+
+
+    let demoIdx = 0;
+
+
+    function lit(id, text) {
+      const el = document.getElementById(id);
+      const data = document.getElementById(id + 'd');
+
+      if (!el) return;
+
+      el.classList.add('lit');
+
+      if (data) data.textContent = text;
+
+      // auto unlit after a short delay so animation is visible
+      setTimeout(() => {
+        el.classList.remove('lit');
+      }, 700);
+    }
+    function isControlPacket(ev) {
+      return ["SYN", "SYN-ACK", "FIN", "FIN-ACK", "RST", "ACK","WindowUpdate (ACK)"].includes(ev.kind);
+    }
+  </script>
+</body>
+
+</html>
