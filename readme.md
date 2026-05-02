@@ -12,6 +12,12 @@ Built with Go + BPF on macOS/BSD. **Currently supported on macOS only.**
 cd capture
 sudo go run . en0 3000
 ```
+**In next terminal**
+
+```
+cd server
+go run main.go
+```
 
 Open `http://localhost:8080` — packets flow in live as they're captured.
 
